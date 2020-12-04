@@ -1,0 +1,255 @@
+---
+title: "shiny"
+author: "Abhishek Jhunjhunwala"
+date: "9/3/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+```{r}
+
+library(tidyverse)
+library(shiny)
+library(leaflet)
+library(dplyr)
+library(DT)  
+
+
+
+
+housing <- read.csv("Housing_2020.csv")
+
+
+
+remove_outliers <- function(x, na.rm = TRUE, ...) {
+  qnt <- quantile(x, probs=c(.25, .75), na.rm = na.rm, ...)
+  H <- 1.5 * IQR(x, na.rm = na.rm)
+  y <- x
+  y[x < (qnt[1] - H)] <- NA
+  y[x > (qnt[2] + H)] <- NA
+  y
+}
+
+housing$PRICE = remove_outliers(housing$PRICE)
+
+housing$BEDS = remove_outliers(housing$BEDS)
+
+housing$BATHS = remove_outliers(housing$BATHS)
+
+housing$SQUARE.FEET = remove_outliers(housing$SQUARE.FEET)
+
+housing$LOT.SIZE = remove_outliers(housing$LOT.SIZE)
+
+housing = housing %>% drop_na(PRICE)
+
+housing = housing %>% drop_na(BEDS)
+
+housing = housing %>% drop_na(BATHS)
+
+housing = housing %>% drop_na(SQUARE.FEET)
+
+housing = housing %>% drop_na(LOT.SIZE)
+
+housing = housing %>% drop_na(YEAR.BUILT)
+
+housing = housing[housing$PROPERTY.TYPE  %in% c("Single Family Residential", "Townhouse"),]
+
+housing$PRICEM = housing$PRICE/1000
+
+housing$Zipcode = housing$ZIP.OR.POSTAL.CODE
+
+library(dplyr)
+
+#Now compare with plyr for better understanding
+data <- plyr::ddply(housing, c("Zipcode","PROPERTY.TYPE"), plyr::summarize, value=median(PRICE))
+
+library(reshape2)
+df = dcast(data, Zipcode~PROPERTY.TYPE)
+
+df = as.data.frame(df)
+
+df = df[order(-df$`Single Family Residential`),]
+
+
+
+
+ui <- fluidPage(
+  theme = "style.css",
+  div(style = "padding: 1px 0px; width: '100%'",
+      titlePanel(
+        title = "",
+        windowTitle = "Home Prices"
+      )
+  ),
+  navbarPage(
+    
+    # Application title.
+    title = div(span(                                          
+                     "Housing Data",
+                     style = "position: relative; top: 50%; transform: translateY(-50%);")),
+  
+  tabPanel(
+    "Home Price Distribution",
+    
+    tabsetPanel(
+      
+      type = "tabs",
+  # App title ----
+  titlePanel("Home Price Distribution"),
+  
+  # Sidebar layout with input and output definitions ----
+  sidebarLayout(
+    
+    # Sidebar panel for inputs ----
+    sidebarPanel(
+      
+      # Input: Slider for the number of bins ----
+      selectInput(inputId = "zipcode",
+                  label = "Select Zipcode",
+                  choices = unique(housing$ZIP.OR.POSTAL.CODE),
+                  selected = unique(housing$ZIP.OR.POSTAL.CODE)[1],
+                  multiple = TRUE)),
+    
+    # Main panel for displaying outputs ----
+    mainPanel(
+      
+      # Output: Histogram ----
+      plotOutput(outputId = "distPlot")
+      
+    )
+  )
+)
+    ),
+
+#2
+    tabPanel(
+      "Median Home Prices",  
+      tabsetPanel(
+        type = "tabs",
+        fluidRow(
+          column(10,
+                 dataTableOutput('table')
+          )
+        )
+      )
+    ),
+
+tabPanel(
+  "Price distribution Box Plot",
+  tabsetPanel(
+    type = "tabs",
+    sidebarLayout(
+      
+      # Sidebar panel for Inputs ----
+      sidebarPanel(
+        
+        sliderInput(inputId = "beds",
+                    label = "Beds",
+                    min = min(housing$BEDS), max = max(housing$BEDS),
+                    step = 1,
+                    value = 0)
+        ,
+        sliderInput(inputId = "baths",
+                    label = "Baths",
+                    min = min(housing$BATHS), max = max(housing$BATHS),
+                    step = 1,
+                    value = 0)
+        ,
+        sliderInput(inputId = "sqrft",
+                    label = "Sqrft",
+                    min = min(housing$SQUARE.FEET), max = max(housing$SQUARE.FEET),
+                    step = 100,
+                    value = 0)
+        ,
+        sliderInput(inputId = "lot_size",
+                    label = "Lot_Size",
+                    min = min(housing$LOT.SIZE), max = max(housing$LOT.SIZE),
+                    step = 1000,
+                    value = 0)),
+      
+      mainPanel(
+        # Output: Histogram ----
+        plotOutput(outputId = "myplot")))
+  )
+),
+
+
+           tabPanel("Map", leafletOutput("bbmap", height=1000))
+           
+))
+
+
+
+
+server <- function(input, output) {
+  
+  # 1. It is "reactive" and therefore should be automatically
+  #    re-executed when inputs (input$bins) change
+  # 2. Its output type is a plot
+  output$distPlot <- renderPlot({
+    
+    
+    x = housing[housing$ZIP.OR.POSTAL.CODE %in% input$zipcode,]$PRICEM
+    bins <- seq(min(x), max(x),length.out = 10)
+    #bins = format(bins,scientific = FALSE)
+    hist(x, breaks = bins, col = "#75AADB", border = "white",
+         xlab = "Home Prices in thousands",
+         main = "Histogram of Price distribution"
+    )
+    
+  })
+  
+  output$table <- renderDataTable(df)
+  
+  output$myplot <- renderPlot({
+    x <- housing[ which( housing$BEDS == input$beds | housing$BATHS == input$baths
+                         | housing$SQUARE.FEET == input$sqrft| housing$LOT.SIZE == input$lot_size) , ]
+    boxplot(x$PRICE)
+  })
+  
+  housing <- mutate(housing, cntnt=paste0('<strong>Square Feet: </strong>',SQUARE.FEET,
+                                          '<br><strong>Lot size:</strong> ', LOT.SIZE,
+                                          '<br><strong>Year built:</strong> ', YEAR.BUILT,
+                                          '<br><strong>Beds:</strong> ',BEDS,
+                                          '<br><strong>Baths:</strong> ',BATHS,
+                                          '<br><strong>Price:</strong> ',PRICE
+  )) 
+  
+  # create a color paletter for category type in the data file
+  
+  #pal <- colorFactor(pal = c("#1b9e77", "#d95f02", "#7570b3"), domain = c("Charity", "Government", "Private"))
+  
+  # create the leaflet map  
+  output$bbmap <- renderLeaflet({
+    leaflet(housing) %>% 
+      addCircles(lng = ~LONGITUDE, lat = ~LATITUDE) %>% 
+      addTiles() %>%
+      addCircleMarkers(data = housing, lat =  ~LATITUDE, lng =~LONGITUDE, 
+                       radius = 2, popup = ~as.character(cntnt), 
+                       color = ~"#1b9e77",
+                       stroke = FALSE, fillOpacity = 0.8)%>%
+      addEasyButton(easyButton(
+        icon="fa-crosshairs", title="ME",
+        onClick=JS("function(btn, map){ map.locate({setView: true}); }")))
+  })
+  
+  
+  
+}
+
+    
+shinyApp(ui, server)
+
+
+
+```
+
